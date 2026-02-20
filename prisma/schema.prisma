@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String   @id @default(uuid())
+  name          String
+  email         String   @unique
+  passwordHash  String
+  createdAt     DateTime @default(now())
+
+  groupsCreated Group[]  @relation("GroupCreator")
+  memberships   GroupMember[]
+  contributions Contribution[]
+}
+
+model Group {
+  id               String   @id @default(uuid())
+  name             String
+  targetAmount     Int
+  totalContributed Int      @default(0)
+  deadline         DateTime?
+  createdAt        DateTime @default(now())
+
+  createdBy        User     @relation("GroupCreator", fields: [createdById], references: [id])
+  createdById      String
+
+  members       GroupMember[]
+  contributions Contribution[]
+  payouts       Payout[]
+}
+
+model GroupMember {
+  id      String @id @default(uuid())
+  user    User   @relation(fields: [userId], references: [id])
+  userId  String
+  group   Group  @relation(fields: [groupId], references: [id])
+  groupId String
+}
+
+model Contribution {
+  id               String   @id @default(uuid())
+  amount           Int
+  paymentMethod    PaymentMethod
+  status           PaymentStatus
+  paymentReference String   @unique
+  failureReason    String?
+  createdAt        DateTime @default(now())
+
+  user     User  @relation(fields: [userId], references: [id])
+  userId   String
+  group    Group @relation(fields: [groupId], references: [id])
+  groupId  String
+}
+
+model Payout {
+  id        String   @id @default(uuid())
+  amount    Int
+  status    String
+  createdAt DateTime @default(now())
+
+  group     Group @relation(fields: [groupId], references: [id])
+  groupId   String
+}
+
+enum PaymentMethod {
+  card
+  bank_transfer
+}
+
+enum PaymentStatus {
+  initiated
+  success
+  failed
+}
