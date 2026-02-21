@@ -1,23 +1,51 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from 'src/db/prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from './user.entity';
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    @InjectRepository(User)
+    private userRepo: Repository<User>,
+  ) {}
 
-  async findByEmail(email: string) {
-    return this.prisma.user.findUnique({
-      where: { email },
+  findByEmail(email: string) {
+    return this.userRepo.findOne({ where: { email } });
+  }
+
+  createUser(name: string, email: string, passwordHash: string) {
+    const user = this.userRepo.create({
+      name,
+      email,
+      passwordHash,
+    });
+    return this.userRepo.save(user);
+  }
+
+  setResetToken(email: string, token: string, expiry: Date) {
+    return this.userRepo.update(
+      { email },
+      { resetToken: token, resetTokenExpiry: expiry },
+    );
+  }
+
+  findByResetToken(token: string) {
+    return this.userRepo.findOne({
+      where: {
+        resetToken: token,
+      },
     });
   }
 
-  async createUser(name: string, email: string, passwordHash: string) {
-    return this.prisma.user.create({
-      data: {
-        name,
-        email,
+  updatePassword(userId: string, passwordHash: string) {
+    return this.userRepo.update(
+      { id: userId },
+      {
         passwordHash,
+        resetToken: null,
+        resetTokenExpiry: null,
       },
-    });
+    );
   }
 }
