@@ -14,6 +14,12 @@ import { EmailService } from '../mail/mail.service';
 import { groupInvitationTemplate } from '../mail/templates/group-invite.template';
 import { ApiResponse } from 'src/utils/api-response';
 import { GroupInvite, InviteStatus } from './group-invite.entity';
+import {
+  Contribution,
+  PaymentMethod,
+  PaymentStatus,
+} from './contribution.entity';
+import axios from 'axios';
 
 @Injectable()
 export class GroupsService {
@@ -23,6 +29,9 @@ export class GroupsService {
 
     @InjectRepository(GroupInvite)
     private inviteRepo: Repository<GroupInvite>,
+
+    @InjectRepository(Contribution)
+    private contributionRepo: Repository<Contribution>,
 
     @InjectRepository(GroupMember)
     private memberRepo: Repository<GroupMember>,
@@ -157,6 +166,101 @@ export class GroupsService {
         status: invite.status,
         createdAt: invite.createdAt,
       })),
+    });
+  }
+
+  async getGroupContributions(groupId: string, user: User) {
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      relations: ['members', 'members.user'],
+    });
+
+    if (!group) {
+      throw new NotFoundException('Group not found');
+    }
+
+    const isMember = group.members.some((member) => member.user.id === user.id);
+
+    if (!isMember) {
+      throw new ForbiddenException('You are not a member of this group');
+    }
+
+    const contributions = await this.contributionRepo.find({
+      where: { group: { id: groupId } },
+      relations: ['user'],
+      order: { createdAt: 'DESC' },
+    });
+
+    return ApiResponse.success('Contributions retrieved', {
+      totalContributed: group.totalContributed,
+      contributions: contributions.map((c) => ({
+        id: c.id,
+        amount: c.amount,
+        status: c.status,
+        paymentMethod: c.paymentMethod,
+        user: {
+          id: c.user.id,
+          name: c.user.name,
+          email: c.user.email,
+        },
+        createdAt: c.createdAt,
+      })),
+    });
+  }
+
+  async initiateContribution(groupId: string, amount: number, user: User) {
+    if (amount <= 0) {
+      throw new BadRequestException('Invalid amount');
+    }
+
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      relations: ['members', 'members.user'],
+    });
+
+    if (!group) {
+      throw new NotFoundException('Group not found');
+    }
+
+    const isMember = group.members.some((member) => member.user.id === user.id);
+
+    if (!isMember) {
+      throw new ForbiddenException('You are not a member');
+    }
+
+    const reference = `swiftpay_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+    const contribution = this.contributionRepo.create({
+      amount,
+      paymentMethod: PaymentMethod.CARD,
+      status: PaymentStatus.INITIATED,
+      paymentReference: reference,
+      user,
+      group,
+    });
+
+    await this.contributionRepo.save(contribution);
+
+    // Call Paystack
+    const response = await axios.post(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        email: user.email,
+        amount: amount * 100, // convert to kobo
+        reference,
+        callback_url: `${process.env.FRONTEND_URL}/payment/callback`,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    return ApiResponse.success('Payment initialized', {
+      authorizationUrl: response.data.data.authorization_url,
+      reference,
     });
   }
 }

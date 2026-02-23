@@ -7,6 +7,7 @@ import {
   CreateDateColumn,
 } from 'typeorm';
 import { User } from '../users/user.entity';
+import { Contribution } from './contribution.entity';
 import { GroupInvite } from './group-invite.entity';
 import { GroupMember } from './group-member.entity';
 
@@ -35,6 +36,9 @@ export class Group {
 
   @OneToMany(() => GroupMember, (member) => member.group)
   members: GroupMember[];
+
+  @OneToMany(() => Contribution, (contribution) => contribution.group)
+  contributions: Contribution[];
 
   @CreateDateColumn()
   createdAt: Date;

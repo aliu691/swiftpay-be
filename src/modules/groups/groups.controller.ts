@@ -44,4 +44,20 @@ export class GroupsController {
   getGroup(@Param('id') id: string, @Req() req) {
     return this.groupsService.getGroupDetails(id, req.user);
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/contributions')
+  getContributions(@Param('id') id: string, @Req() req) {
+    return this.groupsService.getGroupContributions(id, req.user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/contribute')
+  contribute(
+    @Param('id') id: string,
+    @Body() body: { amount: number },
+    @Req() req,
+  ) {
+    return this.groupsService.initiateContribution(id, body.amount, req.user);
+  }
 }
