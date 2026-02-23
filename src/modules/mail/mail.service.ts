@@ -1,33 +1,44 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 
 @Injectable()
-export class MailService {
-  async sendResetEmail(to: string, token: string) {
-    await axios.post(
-      'https://api.zeptomail.com/v1.1/email',
-      {
-        from: {
-          address: process.env.ZEPTO_FROM_EMAIL,
-        },
-        to: [
-          {
-            email_address: {
-              address: to,
-            },
+export class EmailService {
+  private readonly logger = new Logger(EmailService.name);
+  private readonly baseUrl = 'https://api.zeptomail.com/v1.1/email';
+
+  async sendEmail(options: { to: string; subject: string; html: string }) {
+    try {
+      await axios.post(
+        this.baseUrl,
+        {
+          from: {
+            address: process.env.ZEPTO_FROM_EMAIL!,
+            name: process.env.ZEPTO_FROM_NAME || 'SwiftPay',
           },
-        ],
-        subject: 'Password Reset',
-        htmlbody: `<p>Reset link:</p>
-          <a href="${process.env.FRONTEND_URL}/reset-password?token=${token}">
-            Reset Password
-          </a>`,
-      },
-      {
-        headers: {
-          Authorization: `Zoho-enczapikey ${process.env.ZEPTO_API_KEY}`,
+          to: [
+            {
+              email_address: {
+                address: options.to,
+              },
+            },
+          ],
+          subject: options.subject,
+          htmlbody: options.html,
         },
-      },
-    );
+        {
+          headers: {
+            Authorization: `Zoho-enczapikey ${process.env.ZEPTO_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      this.logger.log(`Email sent to ${options.to}`);
+    } catch (error: any) {
+      this.logger.error(
+        `ZeptoMail error sending to ${options.to}`,
+        error?.response?.data || error.message,
+      );
+    }
   }
 }
