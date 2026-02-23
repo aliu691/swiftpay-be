@@ -9,14 +9,15 @@ import * as bcrypt from 'bcrypt';
 import { ApiResponse } from 'src/utils/api-response';
 import * as crypto from 'crypto';
 import { addMinutes } from 'date-fns';
-import { MailService } from '../mail/mail.service';
+import { EmailService } from '../mail/mail.service';
+import { passwordResetTemplate } from '../mail/templates/password-reset.template';
 
 @Injectable()
 export class AuthService {
   constructor(
     private usersService: UsersService,
     private jwtService: JwtService,
-    private mailService: MailService,
+    private mailService: EmailService,
   ) {}
 
   async register(name: string, email: string, password: string) {
@@ -72,7 +73,13 @@ export class AuthService {
 
     await this.usersService.setResetToken(email, token, expiry);
 
-    await this.mailService.sendResetEmail(email, token);
+    await this.mailService.sendEmail({
+      to: email,
+      subject: 'Reset your SwiftPay password',
+      html: passwordResetTemplate({
+        resetLink: `${process.env.FRONTEND_URL}/reset-password?token=${token}`,
+      }),
+    });
 
     return ApiResponse.success('Reset link sent');
   }
