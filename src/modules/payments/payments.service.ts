@@ -20,7 +20,6 @@ export class PaymentsService {
 
   async handleWebhook(signature: string, rawBody: Buffer) {
     console.log('================ WEBHOOK RECEIVED ================');
-    console.log('Signature:', signature);
 
     const secret = process.env.PAYSTACK_SECRET_KEY!;
     console.log('Using Secret:', secret ? 'Loaded' : 'Missing');
