@@ -11,6 +11,12 @@ import { Contribution } from './contribution.entity';
 import { GroupInvite } from './group-invite.entity';
 import { GroupMember } from './group-member.entity';
 
+export enum GroupStatus {
+  ACTIVE = 'active',
+  COMPLETED = 'completed',
+  DISBURSED = 'disbursed',
+}
+
 @Entity()
 export class Group {
   @PrimaryGeneratedColumn('uuid')
@@ -39,6 +45,19 @@ export class Group {
 
   @OneToMany(() => Contribution, (contribution) => contribution.group)
   contributions: Contribution[];
+
+  @Column({
+    type: 'enum',
+    enum: GroupStatus,
+    default: GroupStatus.ACTIVE,
+  })
+  status: GroupStatus;
+
+  @Column({ nullable: true })
+  completedAt?: Date;
+
+  @Column({ nullable: true })
+  disbursedAt?: Date;
 
   @CreateDateColumn()
   createdAt: Date;

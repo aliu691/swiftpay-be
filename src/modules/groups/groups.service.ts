@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Group } from './group.entity';
+import { Group, GroupStatus } from './group.entity';
 import { GroupMember } from './group-member.entity';
 import { User } from '../users/user.entity';
 import * as crypto from 'crypto';
@@ -261,6 +261,66 @@ export class GroupsService {
     return ApiResponse.success('Payment initialized', {
       authorizationUrl: response.data.data.authorization_url,
       reference,
+    });
+  }
+
+  async payoutGroup(groupId: string, user: User) {
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      relations: ['createdBy'],
+    });
+
+    if (!group) {
+      throw new NotFoundException('Group not found');
+    }
+
+    if (group.createdBy.id !== user.id) {
+      throw new ForbiddenException('Only creator can payout');
+    }
+
+    if (group.status !== GroupStatus.COMPLETED) {
+      throw new BadRequestException('Group not ready for payout');
+    }
+
+    group.status = GroupStatus.DISBURSED;
+    group.disbursedAt = new Date();
+
+    await this.groupRepo.save(group);
+
+    await this.emailService.sendEmail({
+      to: group.createdBy.email,
+      subject: `Payout processed for ${group.name}`,
+      html: `
+        <h2>💰 Payout Successful</h2>
+        <p>Amount: ₦${group.totalContributed}</p>
+        <p>Status: Disbursed</p>
+      `,
+    });
+
+    return ApiResponse.success('Payout simulated successfully', {
+      amount: group.totalContributed,
+      status: group.status,
+    });
+  }
+
+  async groupSummary(groupId: string) {
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      relations: ['members'],
+    });
+
+    if (!group) {
+      throw new NotFoundException('Group not found');
+    }
+
+    return ApiResponse.success('Group summary retrieved', {
+      status: group.status,
+      totalContributed: group.totalContributed,
+      targetAmount: group.targetAmount,
+      remaining: group.targetAmount - group.totalContributed,
+      membersCount: group.members.length,
+      completedAt: group.completedAt,
+      disbursedAt: group.disbursedAt,
     });
   }
 }

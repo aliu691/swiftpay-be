@@ -60,4 +60,16 @@ export class GroupsController {
   ) {
     return this.groupsService.initiateContribution(id, body.amount, req.user);
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/payout')
+  payout(@Param('id') id: string, @Req() req) {
+    return this.groupsService.payoutGroup(id, req.user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/summary')
+  summary(@Param('id') id: string) {
+    return this.groupsService.groupSummary(id);
+  }
 }

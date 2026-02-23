@@ -2,9 +2,11 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 
-import { Group } from '../groups/group.entity';
+import { Group, GroupStatus } from '../groups/group.entity';
 import * as crypto from 'crypto';
 import { Contribution, PaymentStatus } from '../groups/contribution.entity';
+import { groupCompletedTemplate } from '../mail/templates/group-complete.template';
+import { EmailService } from '../mail/mail.service';
 
 @Injectable()
 export class PaymentsService {
@@ -16,64 +18,96 @@ export class PaymentsService {
     private groupRepo: Repository<Group>,
 
     private dataSource: DataSource,
+    private emailService: EmailService,
   ) {}
 
   async handleWebhook(signature: string, rawBody: Buffer) {
-    console.log('================ WEBHOOK RECEIVED ================');
+    console.log('================ WEBHOOK START ================');
 
     const secret = process.env.PAYSTACK_SECRET_KEY!;
-    console.log('Using Secret:', secret ? 'Loaded' : 'Missing');
 
     const hash = crypto
       .createHmac('sha512', secret)
       .update(rawBody)
       .digest('hex');
 
-    console.log('Computed Hash:', hash);
-
     if (hash !== signature) {
-      console.log('❌ Signature mismatch');
       throw new BadRequestException('Invalid signature');
     }
 
-    console.log('✅ Signature verified');
-
     const event = JSON.parse(rawBody.toString());
-    console.log('Event Type:', event.event);
-    console.log('Reference:', event?.data?.reference);
+    const eventId = event.id;
+    const reference = event?.data?.reference;
 
-    if (event.event !== 'charge.success') {
-      console.log('Ignoring event:', event.event);
+    if (!reference) {
+      console.log('================ WEBHOOK END ================');
       return;
     }
-
-    const reference = event.data.reference;
 
     const contribution = await this.contributionRepo.findOne({
       where: { paymentReference: reference },
-      relations: ['group'],
+      relations: ['group', 'group.createdBy'], // ✅ FIXED
     });
 
     if (!contribution) {
-      console.log('❌ Contribution not found for reference:', reference);
+      console.log('================ WEBHOOK END ================');
       return;
     }
 
-    console.log('Contribution found:', contribution.id);
-
-    if (contribution.status === PaymentStatus.SUCCESS) {
-      console.log('⚠️ Already processed (idempotent)');
+    // 🛡️ Strong idempotency:
+    if (contribution.processedAt) {
+      console.log('Already processed (idempotent)');
+      console.log('================ WEBHOOK END ================');
       return;
     }
 
     await this.dataSource.transaction(async (manager) => {
-      contribution.status = PaymentStatus.SUCCESS;
-      await manager.save(contribution);
+      if (event.event === 'charge.success') {
+        contribution.status = PaymentStatus.SUCCESS;
 
-      contribution.group.totalContributed += contribution.amount;
-      await manager.save(contribution.group);
+        // Prevent double increment (extra protection)
+        if (!contribution.group) return;
+
+        contribution.group.totalContributed += contribution.amount;
+
+        // Check completion
+        if (
+          contribution.group.totalContributed >=
+            contribution.group.targetAmount &&
+          contribution.group.status !== GroupStatus.COMPLETED
+        ) {
+          contribution.group.status = GroupStatus.COMPLETED;
+          contribution.group.completedAt = new Date();
+
+          await manager.save(contribution.group);
+
+          // Send email AFTER save
+          if (contribution.group.createdBy?.email) {
+            await this.emailService.sendEmail({
+              to: contribution.group.createdBy.email,
+              subject: `Group ${contribution.group.name} completed 🎉`,
+              html: groupCompletedTemplate({
+                groupName: contribution.group.name,
+                amount: contribution.group.totalContributed,
+              }),
+            });
+          }
+        }
+
+        await manager.save(contribution.group);
+      }
+
+      if (event.event === 'charge.failed') {
+        contribution.status = PaymentStatus.FAILED;
+      }
+
+      contribution.processedAt = new Date();
+      contribution.webhookEventId = eventId;
+      contribution.webhookPayload = event;
+
+      await manager.save(contribution);
     });
 
-    console.log('🎉 Payment processed successfully');
+    console.log('================ WEBHOOK END ================');
   }
 }
