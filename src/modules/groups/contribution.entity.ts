@@ -46,6 +46,15 @@ export class Contribution {
   @Column({ nullable: true })
   failureReason?: string;
 
+  @Column({ nullable: true })
+  processedAt?: Date;
+
+  @Column({ nullable: true })
+  webhookEventId?: string;
+
+  @Column({ type: 'json', nullable: true })
+  webhookPayload?: any;
+
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
   user: User;
 
