@@ -7,6 +7,7 @@ import * as crypto from 'crypto';
 import { Contribution, PaymentStatus } from '../groups/contribution.entity';
 import { groupCompletedTemplate } from '../mail/templates/group-complete.template';
 import { EmailService } from '../mail/mail.service';
+import { LedgerService } from '../ledger/ledger.service';
 
 @Injectable()
 export class PaymentsService {
@@ -14,11 +15,9 @@ export class PaymentsService {
     @InjectRepository(Contribution)
     private contributionRepo: Repository<Contribution>,
 
-    @InjectRepository(Group)
-    private groupRepo: Repository<Group>,
-
     private dataSource: DataSource,
     private emailService: EmailService,
+    private ledgerService: LedgerService,
   ) {}
 
   async handleWebhook(signature: string, rawBody: Buffer) {
@@ -46,17 +45,10 @@ export class PaymentsService {
 
     const contribution = await this.contributionRepo.findOne({
       where: { paymentReference: reference },
-      relations: ['group', 'group.createdBy'], // ✅ FIXED
+      relations: ['group', 'group.createdBy'],
     });
 
-    if (!contribution) {
-      console.log('================ WEBHOOK END ================');
-      return;
-    }
-
-    // 🛡️ Strong idempotency:
-    if (contribution.processedAt) {
-      console.log('Already processed (idempotent)');
+    if (!contribution || contribution.processedAt) {
       console.log('================ WEBHOOK END ================');
       return;
     }
@@ -65,15 +57,22 @@ export class PaymentsService {
       if (event.event === 'charge.success') {
         contribution.status = PaymentStatus.SUCCESS;
 
-        // Prevent double increment (extra protection)
-        if (!contribution.group) return;
+        // ✅ Per-group ledger account
+        await this.ledgerService.createDoubleEntry(
+          reference,
+          'Group contribution',
+          'PLATFORM_CASH',
+          `GROUP_POOL_${contribution.group.id}`,
+          contribution.amount,
+        );
 
-        contribution.group.totalContributed += contribution.amount;
+        // ✅ Compute actual balance from ledger
+        const balance = await this.ledgerService.getGroupBalance(
+          contribution.group.id,
+        );
 
-        // Check completion
         if (
-          contribution.group.totalContributed >=
-            contribution.group.targetAmount &&
+          balance >= contribution.group.targetAmount &&
           contribution.group.status !== GroupStatus.COMPLETED
         ) {
           contribution.group.status = GroupStatus.COMPLETED;
@@ -81,20 +80,17 @@ export class PaymentsService {
 
           await manager.save(contribution.group);
 
-          // Send email AFTER save
           if (contribution.group.createdBy?.email) {
             await this.emailService.sendEmail({
               to: contribution.group.createdBy.email,
               subject: `Group ${contribution.group.name} completed 🎉`,
               html: groupCompletedTemplate({
                 groupName: contribution.group.name,
-                amount: contribution.group.totalContributed,
+                amount: balance,
               }),
             });
           }
         }
-
-        await manager.save(contribution.group);
       }
 
       if (event.event === 'charge.failed') {
