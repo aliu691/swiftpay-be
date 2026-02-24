@@ -1,6 +1,6 @@
 // src/modules/ledger/ledger.controller.ts
 
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { LedgerService } from './ledger.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
@@ -16,7 +16,37 @@ export class LedgerController {
   }
 
   @Get('entries')
-  getEntries() {
-    return this.ledgerService.getAllEntries();
+  getEntries(
+    @Query('page') page = '1',
+    @Query('limit') limit = '20',
+    @Query('reference') reference?: string,
+    @Query('accountCode') accountCode?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.ledgerService.getAllEntries(
+      Number(page),
+      Number(limit),
+      reference,
+      accountCode,
+      startDate,
+      endDate,
+    );
+  }
+
+  @Get('reconcile')
+  reconcile(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.ledgerService.reconcile(startDate, endDate);
+  }
+
+  @Get('dashboard')
+  dashboard(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.ledgerService.getAdminDashboard(startDate, endDate);
   }
 }
