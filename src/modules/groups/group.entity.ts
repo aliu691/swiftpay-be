@@ -28,9 +28,6 @@ export class Group {
   @Column({ type: 'int' })
   targetAmount: number;
 
-  @Column({ default: 0 })
-  totalContributed: number;
-
   @Column({ nullable: true })
   deadline: Date;
 

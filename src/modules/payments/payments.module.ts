@@ -5,9 +5,14 @@ import { PaymentsService } from './payments.service';
 import { Group } from '../groups/group.entity';
 import { Contribution } from '../groups/contribution.entity';
 import { MailModule } from '../mail/mail.module';
+import { LedgerModule } from '../ledger/ledger.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Contribution, Group]), MailModule],
+  imports: [
+    TypeOrmModule.forFeature([Contribution, Group]),
+    MailModule,
+    LedgerModule,
+  ],
   controllers: [PaymentsController],
   providers: [PaymentsService],
 })

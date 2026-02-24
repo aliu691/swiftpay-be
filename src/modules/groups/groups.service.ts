@@ -20,6 +20,7 @@ import {
   PaymentStatus,
 } from './contribution.entity';
 import axios from 'axios';
+import { LedgerService } from '../ledger/ledger.service';
 
 @Injectable()
 export class GroupsService {
@@ -36,6 +37,7 @@ export class GroupsService {
     @InjectRepository(GroupMember)
     private memberRepo: Repository<GroupMember>,
     private emailService: EmailService,
+    private ledgerService: LedgerService,
   ) {}
 
   async createGroup(
@@ -57,6 +59,8 @@ export class GroupsService {
     });
 
     await this.groupRepo.save(group);
+
+    await this.ledgerService.createGroupPoolAccount(group.id);
 
     // Add creator as member
     await this.memberRepo.save(
@@ -191,8 +195,10 @@ export class GroupsService {
       order: { createdAt: 'DESC' },
     });
 
+    const balance = await this.ledgerService.getGroupBalance(groupId);
+
     return ApiResponse.success('Contributions retrieved', {
-      totalContributed: group.totalContributed,
+      totalContributed: balance,
       contributions: contributions.map((c) => ({
         id: c.id,
         amount: c.amount,
@@ -226,6 +232,20 @@ export class GroupsService {
 
     if (!isMember) {
       throw new ForbiddenException('You are not a member');
+    }
+
+    // 🚫 Prevent contributions if group is not active
+    if (group.status !== GroupStatus.ACTIVE) {
+      throw new BadRequestException(
+        `Group is ${group.status}. Contributions are closed.`,
+      );
+    }
+
+    // 💰 Prevent overfunding
+    const currentBalance = await this.ledgerService.getGroupBalance(groupId);
+
+    if (currentBalance + amount > group.targetAmount) {
+      throw new BadRequestException('Contribution exceeds remaining amount');
     }
 
     const reference = `swiftpay_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
@@ -270,9 +290,7 @@ export class GroupsService {
       relations: ['createdBy'],
     });
 
-    if (!group) {
-      throw new NotFoundException('Group not found');
-    }
+    if (!group) throw new NotFoundException('Group not found');
 
     if (group.createdBy.id !== user.id) {
       throw new ForbiddenException('Only creator can payout');
@@ -282,9 +300,23 @@ export class GroupsService {
       throw new BadRequestException('Group not ready for payout');
     }
 
+    const balance = await this.ledgerService.getGroupBalance(group.id);
+
+    if (balance <= 0) {
+      throw new BadRequestException('No balance available');
+    }
+
+    // ✅ Ledger first
+    await this.ledgerService.createDoubleEntry(
+      `payout_${group.id}_${Date.now()}`,
+      'Group payout',
+      `GROUP_POOL_${group.id}`, // debit liability
+      'PLATFORM_CASH', // credit cash
+      balance,
+    );
+
     group.status = GroupStatus.DISBURSED;
     group.disbursedAt = new Date();
-
     await this.groupRepo.save(group);
 
     await this.emailService.sendEmail({
@@ -292,13 +324,13 @@ export class GroupsService {
       subject: `Payout processed for ${group.name}`,
       html: `
         <h2>💰 Payout Successful</h2>
-        <p>Amount: ₦${group.totalContributed}</p>
+        <p>Amount: ₦${balance}</p>
         <p>Status: Disbursed</p>
       `,
     });
 
     return ApiResponse.success('Payout simulated successfully', {
-      amount: group.totalContributed,
+      amount: balance,
       status: group.status,
     });
   }
@@ -313,11 +345,13 @@ export class GroupsService {
       throw new NotFoundException('Group not found');
     }
 
+    const balance = await this.ledgerService.getGroupBalance(groupId);
+
     return ApiResponse.success('Group summary retrieved', {
       status: group.status,
-      totalContributed: group.totalContributed,
+      totalContributed: balance,
       targetAmount: group.targetAmount,
-      remaining: group.targetAmount - group.totalContributed,
+      remaining: group.targetAmount - balance,
       membersCount: group.members.length,
       completedAt: group.completedAt,
       disbursedAt: group.disbursedAt,
