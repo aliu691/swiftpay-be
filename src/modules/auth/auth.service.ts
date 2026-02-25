@@ -81,7 +81,7 @@ export class AuthService {
       }),
     });
 
-    return ApiResponse.success('Reset link sent');
+    return ApiResponse.success('Reset link sent, check email to proceed');
   }
 
   async resetPassword(token: string, newPassword: string) {
