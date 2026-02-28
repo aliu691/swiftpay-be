@@ -154,6 +154,8 @@ export class GroupsService {
     return ApiResponse.success('Group details retrieved', {
       id: group.id,
       name: group.name,
+      status: group.status,
+      createdAt: group.createdAt,
       targetAmount: group.targetAmount,
       createdBy: {
         id: group.createdBy.id,
@@ -189,16 +191,25 @@ export class GroupsService {
       throw new ForbiddenException('You are not a member of this group');
     }
 
+    // Fetch contributions list
     const contributions = await this.contributionRepo.find({
       where: { group: { id: groupId } },
       relations: ['user'],
       order: { createdAt: 'DESC' },
     });
 
-    const balance = await this.ledgerService.getGroupBalance(groupId);
+    // ✅ Efficient SQL aggregation for total contributed
+    const { sum } = await this.contributionRepo
+      .createQueryBuilder('c')
+      .select('COALESCE(SUM(c.amount), 0)', 'sum')
+      .where('c.groupId = :groupId', { groupId })
+      .andWhere('c.status = :status', { status: 'success' })
+      .getRawOne();
+
+    const totalContributed = Number(sum);
 
     return ApiResponse.success('Contributions retrieved', {
-      totalContributed: balance,
+      totalContributed,
       contributions: contributions.map((c) => ({
         id: c.id,
         amount: c.amount,
@@ -241,14 +252,32 @@ export class GroupsService {
       );
     }
 
-    // 💰 Prevent overfunding
-    const currentBalance = await this.ledgerService.getGroupBalance(groupId);
+    /* =====================================================
+     ✅ FIXED BALANCE CALCULATION (ONLY COUNT SUCCESS)
+  ===================================================== */
 
-    if (currentBalance + amount > group.targetAmount) {
-      throw new BadRequestException('Contribution exceeds remaining amount');
+    const { sum } = await this.contributionRepo
+      .createQueryBuilder('c')
+      .select('COALESCE(SUM(c.amount), 0)', 'sum')
+      .where('c.groupId = :groupId', { groupId })
+      .andWhere('c.status = :status', { status: PaymentStatus.SUCCESS })
+      .getRawOne();
+
+    const currentBalance = Number(sum);
+    const remainingAmount = group.targetAmount - currentBalance;
+
+    // 💰 Prevent overfunding
+    if (amount > remainingAmount) {
+      throw new BadRequestException(
+        `You can only contribute up to ₦${remainingAmount.toLocaleString()}`,
+      );
     }
 
-    const reference = `swiftpay_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    /* ===================================================== */
+
+    const reference = `swiftpay_${Date.now()}_${Math.floor(
+      Math.random() * 1000,
+    )}`;
 
     const contribution = this.contributionRepo.create({
       amount,
@@ -355,6 +384,49 @@ export class GroupsService {
       membersCount: group.members.length,
       completedAt: group.completedAt,
       disbursedAt: group.disbursedAt,
+    });
+  }
+
+  async getInvitePreview(token: string) {
+    const invite = await this.inviteRepo.findOne({
+      where: { token },
+      relations: ['group', 'group.createdBy'],
+    });
+
+    if (!invite) {
+      throw new BadRequestException('Invalid invite');
+    }
+
+    // Optional: handle expired / used invite early
+    if (invite.status !== InviteStatus.PENDING) {
+      throw new BadRequestException('Invite already used or expired');
+    }
+
+    const groupId = invite.group.id;
+
+    // ✅ Efficient SQL aggregation for total contributed
+    const { sum } = await this.contributionRepo
+      .createQueryBuilder('c')
+      .select('COALESCE(SUM(c.amount), 0)', 'sum')
+      .where('c.groupId = :groupId', { groupId })
+      .andWhere('c.status = :status', { status: 'success' })
+      .getRawOne();
+
+    const totalContributed = Number(sum);
+    const targetAmount = invite.group.targetAmount;
+
+    const percentage =
+      targetAmount > 0
+        ? Math.min((totalContributed / targetAmount) * 100, 100)
+        : 0;
+
+    return ApiResponse.success('Invite found', {
+      groupName: invite.group.name,
+      targetAmount,
+      totalContributed,
+      percentage,
+      createdBy: invite.group.createdBy.name,
+      inviteStatus: invite.status,
     });
   }
 }

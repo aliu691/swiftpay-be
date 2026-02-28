@@ -1,11 +1,20 @@
-import { Controller, Post, Headers, Req, HttpCode } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Headers,
+  Req,
+  HttpCode,
+  Get,
+  Param,
+} from '@nestjs/common';
+import { ApiResponse } from 'src/utils/api-response';
 import { PaymentsService } from './payments.service';
 
-@Controller('webhooks')
+@Controller('payments')
 export class PaymentsController {
   constructor(private paymentsService: PaymentsService) {}
 
-  @Post('paystack')
+  @Post('webhooks/paystack')
   @HttpCode(200)
   async handlePaystackWebhook(
     @Headers('x-paystack-signature') signature: string,
@@ -13,5 +22,12 @@ export class PaymentsController {
   ) {
     await this.paymentsService.handleWebhook(signature, req.rawBody);
     return { received: true };
+  }
+
+  @Get('verify/:reference')
+  async verifyPayment(@Param('reference') reference: string) {
+    const result = await this.paymentsService.verifyPayment(reference);
+
+    return ApiResponse.success('Payment verified', result);
   }
 }

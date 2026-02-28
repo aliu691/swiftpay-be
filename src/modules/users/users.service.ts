@@ -74,14 +74,20 @@ export class UsersService {
       .where('c.userId = :userId', { userId: user.id });
 
     if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+
       query.andWhere('c.createdAt >= :startDate', {
-        startDate: new Date(startDate),
+        startDate: start,
       });
     }
 
     if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+
       query.andWhere('c.createdAt <= :endDate', {
-        endDate: new Date(endDate),
+        endDate: end,
       });
     }
 
@@ -95,9 +101,12 @@ export class UsersService {
       (c) => c.status === PaymentStatus.FAILED,
     );
 
-    const totalDonated = successful.reduce((sum, c) => sum + c.amount, 0);
+    const totalDonated = successful.reduce(
+      (sum, c) => sum + Number(c.amount),
+      0,
+    );
 
-    // Groups joined
+    // 🔥 GROUP STATS SHOULD NOT BE DATE FILTERED
     const memberships = await this.memberRepo.find({
       where: { user: { id: user.id } },
       relations: ['group', 'group.createdBy'],
