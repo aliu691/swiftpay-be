@@ -14,7 +14,7 @@ import { LedgerModule } from './modules/ledger/ledger.module';
     }),
     TypeOrmModule.forRoot({
       type: 'postgres',
-      url: process.env.DATABASE_URL,
+      url: process.env.DATABASE_URL_SESPOOL,
       autoLoadEntities: true,
       synchronize: true,
     }),

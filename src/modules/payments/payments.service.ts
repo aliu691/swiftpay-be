@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 
@@ -8,6 +12,7 @@ import { Contribution, PaymentStatus } from '../groups/contribution.entity';
 import { groupCompletedTemplate } from '../mail/templates/group-complete.template';
 import { EmailService } from '../mail/mail.service';
 import { LedgerService } from '../ledger/ledger.service';
+import axios from 'axios';
 
 @Injectable()
 export class PaymentsService {
@@ -105,5 +110,51 @@ export class PaymentsService {
     });
 
     console.log('================ WEBHOOK END ================');
+  }
+
+  async verifyPayment(reference: string) {
+    const contribution = await this.contributionRepo.findOne({
+      where: { paymentReference: reference },
+      relations: ['group'],
+    });
+
+    if (!contribution) {
+      throw new NotFoundException('Payment not found');
+    }
+
+    // If already success, return immediately
+    if (contribution.status === PaymentStatus.SUCCESS) {
+      return {
+        groupId: contribution.group.id,
+        status: 'success',
+      };
+    }
+
+    // 🔥 Verify directly with Paystack
+    const response = await axios.get(
+      `https://api.paystack.co/transaction/verify/${reference}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+        },
+      },
+    );
+
+    const paystackData = response.data.data;
+
+    if (paystackData.status === 'success') {
+      contribution.status = PaymentStatus.SUCCESS;
+      await this.contributionRepo.save(contribution);
+
+      return {
+        groupId: contribution.group.id,
+        status: 'success',
+      };
+    }
+
+    return {
+      groupId: contribution.group.id,
+      status: 'failed',
+    };
   }
 }

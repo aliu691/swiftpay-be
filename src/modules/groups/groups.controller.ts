@@ -72,4 +72,10 @@ export class GroupsController {
   summary(@Param('id') id: string) {
     return this.groupsService.groupSummary(id);
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('invite/:token')
+  async getInvitePreview(@Param('token') token: string) {
+    return this.groupsService.getInvitePreview(token);
+  }
 }
