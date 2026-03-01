@@ -3,6 +3,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ApiResponse } from 'src/utils/api-response';
+import { buildDateRange } from 'src/utils/date-range.util';
 import { Repository } from 'typeorm';
 import { Contribution, PaymentStatus } from '../groups/contribution.entity';
 import { Group, GroupStatus } from '../groups/group.entity';
@@ -115,59 +116,6 @@ export class LedgerService implements OnModuleInit {
     });
   }
 
-  async getAllEntries(
-    page = 1,
-    limit = 20,
-    reference?: string,
-    accountCode?: string,
-    startDate?: string,
-    endDate?: string,
-  ) {
-    const skip = (page - 1) * limit;
-
-    const query = this.entryRepo
-      .createQueryBuilder('entry')
-      .leftJoinAndSelect('entry.lines', 'line')
-      .leftJoinAndSelect('line.account', 'account')
-      .orderBy('entry.createdAt', 'DESC')
-      .skip(skip)
-      .take(limit);
-
-    if (reference) {
-      query.andWhere('entry.reference ILIKE :reference', {
-        reference: `%${reference}%`,
-      });
-    }
-
-    if (accountCode) {
-      query.andWhere('account.code = :accountCode', {
-        accountCode,
-      });
-    }
-
-    if (startDate) {
-      query.andWhere('entry.createdAt >= :startDate', {
-        startDate: new Date(startDate),
-      });
-    }
-
-    if (endDate) {
-      query.andWhere('entry.createdAt <= :endDate', {
-        endDate: new Date(endDate),
-      });
-    }
-
-    const [entries, total] = await query.getManyAndCount();
-
-    return ApiResponse.success('Ledger entries retrieved', {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-      entries,
-    });
-  }
-
   async getGroupBalance(groupId: string): Promise<number> {
     const code = `GROUP_POOL_${groupId}`;
 
@@ -202,22 +150,79 @@ export class LedgerService implements OnModuleInit {
     });
   }
 
+  async getAllEntries(
+    page = 1,
+    limit = 20,
+    reference?: string,
+    accountCode?: string,
+    startDate?: string,
+    endDate?: string,
+  ) {
+    const skip = (page - 1) * limit;
+
+    const { start, end } = buildDateRange(startDate, endDate);
+
+    const query = this.entryRepo
+      .createQueryBuilder('entry')
+      .leftJoinAndSelect('entry.lines', 'line')
+      .leftJoinAndSelect('line.account', 'account')
+      .orderBy('entry.createdAt', 'DESC')
+      .skip(skip)
+      .take(limit);
+
+    if (reference) {
+      query.andWhere('entry.reference ILIKE :reference', {
+        reference: `%${reference}%`,
+      });
+    }
+
+    if (accountCode) {
+      query.andWhere('account.code = :accountCode', {
+        accountCode,
+      });
+    }
+
+    if (start) {
+      query.andWhere('entry.createdAt >= :start', { start });
+    }
+
+    if (end) {
+      query.andWhere('entry.createdAt <= :end', { end });
+    }
+
+    const [entries, total] = await query.getManyAndCount();
+
+    return ApiResponse.success('Ledger entries retrieved', {
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+      filters: {
+        reference: reference ?? null,
+        accountCode: accountCode ?? null,
+        startDate: startDate ?? null,
+        endDate: endDate ?? null,
+      },
+      data: entries,
+    });
+  }
+
   async reconcile(startDate?: string, endDate?: string) {
+    const { start, end } = buildDateRange(startDate, endDate);
+
     const query = this.lineRepo
       .createQueryBuilder('line')
       .leftJoinAndSelect('line.account', 'account')
       .leftJoin('line.entry', 'entry');
 
-    if (startDate) {
-      query.andWhere('entry.createdAt >= :startDate', {
-        startDate: new Date(startDate),
-      });
+    if (start) {
+      query.andWhere('entry.createdAt >= :start', { start });
     }
 
-    if (endDate) {
-      query.andWhere('entry.createdAt <= :endDate', {
-        endDate: new Date(endDate),
-      });
+    if (end) {
+      query.andWhere('entry.createdAt <= :end', { end });
     }
 
     const lines = await query.getMany();
@@ -226,9 +231,7 @@ export class LedgerService implements OnModuleInit {
 
     for (const line of lines) {
       const code = line.account.code;
-
       if (!balances[code]) balances[code] = 0;
-
       balances[code] += line.debit - line.credit;
     }
 
@@ -239,6 +242,10 @@ export class LedgerService implements OnModuleInit {
       .reduce((sum, [, value]) => sum + Math.abs(value), 0);
 
     return ApiResponse.success('Reconciliation result', {
+      filters: {
+        startDate: startDate ?? null,
+        endDate: endDate ?? null,
+      },
       platformCash,
       totalGroupLiabilities,
       balanced: platformCash === totalGroupLiabilities,
@@ -246,16 +253,13 @@ export class LedgerService implements OnModuleInit {
   }
 
   async getAdminDashboard(startDate?: string, endDate?: string) {
-    const start = startDate ? new Date(startDate) : undefined;
-    const end = endDate ? new Date(endDate) : undefined;
-
-    // =========================
-    // Contributions (INFLOW)
-    // =========================
+    const { start, end } = buildDateRange(startDate, endDate);
 
     const contributionQuery = this.contributionRepo
       .createQueryBuilder('c')
-      .where('c.status = :status', { status: PaymentStatus.SUCCESS });
+      .where('c.status = :status', {
+        status: PaymentStatus.SUCCESS,
+      });
 
     if (start) {
       contributionQuery.andWhere('c.createdAt >= :start', { start });
@@ -273,21 +277,29 @@ export class LedgerService implements OnModuleInit {
     );
 
     const successfulPayments = contributions.length;
-    const totalAttempts = await this.contributionRepo.count();
+
+    const totalAttemptsQuery = this.contributionRepo.createQueryBuilder('c');
+
+    if (start) {
+      totalAttemptsQuery.andWhere('c.createdAt >= :start', { start });
+    }
+
+    if (end) {
+      totalAttemptsQuery.andWhere('c.createdAt <= :end', { end });
+    }
+
+    const totalAttempts = await totalAttemptsQuery.getCount();
 
     const successRate =
       totalAttempts === 0
         ? 0
         : Math.round((successfulPayments / totalAttempts) * 100);
 
-    // =========================
-    // Payouts (OUTFLOW)
-    // =========================
-
+    // Payouts
     const payoutQuery = this.entryRepo
       .createQueryBuilder('e')
       .leftJoinAndSelect('e.lines', 'line')
-      .leftJoinAndSelect('line.account', 'account') // ✅ ADD THIS
+      .leftJoinAndSelect('line.account', 'account')
       .where('e.description = :desc', { desc: 'Group payout' });
 
     if (start) {
@@ -302,16 +314,12 @@ export class LedgerService implements OnModuleInit {
 
     const totalPayoutAmount = payoutEntries.reduce((sum, entry) => {
       const payoutLine = entry.lines.find(
-        (l) => l.account && l.account.code === 'PLATFORM_CASH',
+        (l) => l.account?.code === 'PLATFORM_CASH',
       );
       return sum + (payoutLine?.credit || 0);
     }, 0);
 
     const paidOutGroups = payoutEntries.length;
-
-    // =========================
-    // Group States
-    // =========================
 
     const activeGroups = await this.groupRepo.count({
       where: { status: GroupStatus.ACTIVE },
@@ -326,6 +334,10 @@ export class LedgerService implements OnModuleInit {
     });
 
     return ApiResponse.success('Admin dashboard metrics', {
+      filters: {
+        startDate: startDate ?? null,
+        endDate: endDate ?? null,
+      },
       totalContributions,
       totalPayoutAmount,
       paidOutGroups,

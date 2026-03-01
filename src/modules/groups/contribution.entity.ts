@@ -19,6 +19,16 @@ export enum PaymentStatus {
   FAILED = 'failed',
 }
 
+export enum FailureReason {
+  FAILED_AUTHORIZATION = 'FAILED_AUTHORIZATION',
+  WEBHOOK_TIMEOUT = 'WEBHOOK_TIMEOUT',
+  SIGNATURE_INVALID = 'SIGNATURE_INVALID',
+  BANK_DECLINED = 'BANK_DECLINED',
+  PSP_TIMEOUT = 'PSP_TIMEOUT',
+  OVERFUNDING_BLOCKED = 'OVERFUNDING_BLOCKED',
+  PAYSTACK_FAILED = 'PAYSTACK_FAILED',
+}
+
 @Entity()
 export class Contribution {
   @PrimaryGeneratedColumn('uuid')
@@ -43,8 +53,18 @@ export class Contribution {
   @Column({ unique: true })
   paymentReference: string;
 
-  @Column({ nullable: true })
-  failureReason?: string;
+  @Column({
+    type: 'enum',
+    enum: FailureReason,
+    nullable: true,
+  })
+  failureReason?: FailureReason;
+
+  @Column({
+    type: 'timestamp',
+    nullable: true,
+  })
+  failedAt?: Date;
 
   @Column({ nullable: true })
   processedAt?: Date;

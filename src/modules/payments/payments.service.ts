@@ -8,7 +8,11 @@ import { Repository, DataSource } from 'typeorm';
 
 import { Group, GroupStatus } from '../groups/group.entity';
 import * as crypto from 'crypto';
-import { Contribution, PaymentStatus } from '../groups/contribution.entity';
+import {
+  Contribution,
+  FailureReason,
+  PaymentStatus,
+} from '../groups/contribution.entity';
 import { groupCompletedTemplate } from '../mail/templates/group-complete.template';
 import { EmailService } from '../mail/mail.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -122,7 +126,10 @@ export class PaymentsService {
       throw new NotFoundException('Payment not found');
     }
 
-    // If already success, return immediately
+    /* =====================================================
+       ✅ RETURN IMMEDIATELY IF ALREADY FINAL STATE
+    ===================================================== */
+
     if (contribution.status === PaymentStatus.SUCCESS) {
       return {
         groupId: contribution.group.id,
@@ -130,28 +137,66 @@ export class PaymentsService {
       };
     }
 
-    // 🔥 Verify directly with Paystack
-    const response = await axios.get(
-      `https://api.paystack.co/transaction/verify/${reference}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-        },
-      },
-    );
-
-    const paystackData = response.data.data;
-
-    if (paystackData.status === 'success') {
-      contribution.status = PaymentStatus.SUCCESS;
-      await this.contributionRepo.save(contribution);
-
+    if (contribution.status === PaymentStatus.FAILED) {
       return {
         groupId: contribution.group.id,
-        status: 'success',
+        status: 'failed',
+        failureReason: contribution.failureReason ?? null,
       };
     }
 
+    /* =====================================================
+       💳 ONLY VERIFY IF INITIATED
+    ===================================================== */
+
+    if (contribution.status === PaymentStatus.INITIATED) {
+      try {
+        const response = await axios.get(
+          `https://api.paystack.co/transaction/verify/${reference}`,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+            },
+          },
+        );
+
+        const paystackData = response.data.data;
+
+        if (paystackData.status === 'success') {
+          contribution.status = PaymentStatus.SUCCESS;
+          await this.contributionRepo.save(contribution);
+
+          return {
+            groupId: contribution.group.id,
+            status: 'success',
+          };
+        }
+
+        // Paystack returned non-success
+        contribution.status = PaymentStatus.FAILED;
+        contribution.failureReason = FailureReason.PAYSTACK_FAILED;
+        await this.contributionRepo.save(contribution);
+
+        return {
+          groupId: contribution.group.id,
+          status: 'failed',
+          failureReason: FailureReason.PAYSTACK_FAILED,
+        };
+      } catch (error) {
+        // Prevent infinite spinner on Paystack error
+        contribution.status = PaymentStatus.FAILED;
+        contribution.failureReason = FailureReason.PSP_TIMEOUT;
+        await this.contributionRepo.save(contribution);
+
+        return {
+          groupId: contribution.group.id,
+          status: 'failed',
+          failureReason: FailureReason.PSP_TIMEOUT,
+        };
+      }
+    }
+
+    // Fallback (should never hit)
     return {
       groupId: contribution.group.id,
       status: 'failed',
