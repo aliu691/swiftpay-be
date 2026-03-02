@@ -344,7 +344,7 @@ export class LedgerService implements OnModuleInit {
       activeGroups,
       completedGroups,
       disbursedGroups,
-      successRate: `${successRate}%`,
+      successRate: successRate,
     });
   }
 }

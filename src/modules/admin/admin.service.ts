@@ -134,15 +134,40 @@ export class AdminService {
   =========================== */
 
   async getPaymentTrends(days: number) {
-    const results = [];
+    const results: {
+      date: string;
+      total: number;
+      successRate: number;
+    }[] = [];
+
+    // Always use UTC reference
+    const now = new Date();
 
     for (let i = days - 1; i >= 0; i--) {
-      const start = new Date();
-      start.setDate(start.getDate() - i);
-      start.setHours(0, 0, 0, 0);
+      // Create UTC date for each day
+      const start = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate() - i,
+          0,
+          0,
+          0,
+          0,
+        ),
+      );
 
-      const end = new Date(start);
-      end.setHours(23, 59, 59, 999);
+      const end = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate() - i,
+          23,
+          59,
+          59,
+          999,
+        ),
+      );
 
       const payments = await this.contributionRepo.find({
         where: {
@@ -159,28 +184,26 @@ export class AdminService {
       const successRate =
         total > 0 ? Math.round((successful / total) * 100) : 0;
 
+      // Format date in UTC safely (no shifting)
+      const year = start.getUTCFullYear();
+      const month = String(start.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(start.getUTCDate()).padStart(2, '0');
+
       results.push({
-        date: start.toISOString().split('T')[0],
+        date: `${year}-${month}-${day}`,
         total,
         successRate,
       });
     }
 
-    // 🔥 Reverse so today comes first
-    const reversed = results.reverse();
-
-    const today = reversed[0];
-    const yesterday = reversed[1];
+    // Results are already chronological (oldest → newest)
+    const today = results[results.length - 1];
+    const yesterday = results[results.length - 2];
 
     let incident = false;
     let dropPercentage = 0;
 
-    // Only compare if we have at least 2 days
-    if (
-      today &&
-      yesterday &&
-      yesterday.total > 0 // prevent comparing against empty day
-    ) {
+    if (today && yesterday && yesterday.total > 0) {
       dropPercentage = yesterday.successRate - today.successRate;
 
       if (dropPercentage >= 15) {
@@ -195,7 +218,7 @@ export class AdminService {
         today: today?.successRate ?? null,
         yesterday: yesterday?.successRate ?? null,
       },
-      data: reversed,
+      data: results, // chronological order
     });
   }
 
