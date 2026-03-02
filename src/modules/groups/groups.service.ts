@@ -16,11 +16,13 @@ import { ApiResponse } from 'src/utils/api-response';
 import { GroupInvite, InviteStatus } from './group-invite.entity';
 import {
   Contribution,
+  FailureReason,
   PaymentMethod,
   PaymentStatus,
 } from './contribution.entity';
 import axios from 'axios';
 import { LedgerService } from '../ledger/ledger.service';
+import { AdminService } from '../admin/admin.service';
 
 @Injectable()
 export class GroupsService {
@@ -38,6 +40,7 @@ export class GroupsService {
     private memberRepo: Repository<GroupMember>,
     private emailService: EmailService,
     private ledgerService: LedgerService,
+    private adminService: AdminService,
   ) {}
 
   async createGroup(
@@ -253,8 +256,8 @@ export class GroupsService {
     }
 
     /* =====================================================
-     ✅ FIXED BALANCE CALCULATION (ONLY COUNT SUCCESS)
-  ===================================================== */
+       ✅ BALANCE CALCULATION (ONLY SUCCESSFUL PAYMENTS)
+    ===================================================== */
 
     const { sum } = await this.contributionRepo
       .createQueryBuilder('c')
@@ -266,14 +269,49 @@ export class GroupsService {
     const currentBalance = Number(sum);
     const remainingAmount = group.targetAmount - currentBalance;
 
-    // 💰 Prevent overfunding
     if (amount > remainingAmount) {
       throw new BadRequestException(
         `You can only contribute up to ₦${remainingAmount.toLocaleString()}`,
       );
     }
 
-    /* ===================================================== */
+    /* =====================================================
+       🎯 CHECK FOR FORCED FAILURE (DEMO CONTROL MODE)
+    ===================================================== */
+
+    const forcedReason = this.adminService.getForcedFailureReason();
+
+    if (forcedReason) {
+      const reference = `swiftpay_${Date.now()}_${Math.floor(
+        Math.random() * 1000,
+      )}`;
+
+      const contribution = this.contributionRepo.create({
+        amount,
+        paymentMethod: PaymentMethod.CARD,
+        status: PaymentStatus.FAILED,
+        paymentReference: reference,
+        failureReason: forcedReason,
+        user,
+        group,
+      });
+
+      await this.contributionRepo.save(contribution);
+
+      this.adminService.clearForcedFailure();
+
+      return ApiResponse.success('Simulated payment failure', {
+        authorizationUrl: `${process.env.FRONTEND_URL}/payment/callback?reference=${reference}`,
+        reference,
+        simulated: true,
+        status: PaymentStatus.FAILED,
+        failureReason: forcedReason,
+      });
+    }
+
+    /* =====================================================
+       💳 NORMAL PAYMENT FLOW
+    ===================================================== */
 
     const reference = `swiftpay_${Date.now()}_${Math.floor(
       Math.random() * 1000,
@@ -290,12 +328,11 @@ export class GroupsService {
 
     await this.contributionRepo.save(contribution);
 
-    // Call Paystack
     const response = await axios.post(
       'https://api.paystack.co/transaction/initialize',
       {
         email: user.email,
-        amount: amount * 100, // convert to kobo
+        amount: amount * 100,
         reference,
         callback_url: `${process.env.FRONTEND_URL}/payment/callback`,
       },

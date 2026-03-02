@@ -8,11 +8,13 @@ import { MailModule } from '../mail/mail.module';
 import { GroupInvite } from './group-invite.entity';
 import { Contribution } from './contribution.entity';
 import { LedgerModule } from '../ledger/ledger.module';
+import { AdminModule } from '../admin/admin.module';
 
 @Module({
   imports: [
     MailModule,
     LedgerModule,
+    AdminModule,
     TypeOrmModule.forFeature([Group, GroupMember, GroupInvite, Contribution]),
   ],
   providers: [GroupsService],

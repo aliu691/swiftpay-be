@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ApiResponse } from 'src/utils/api-response';
+import { buildDateRange } from 'src/utils/date-range.util';
 import { Repository, MoreThan } from 'typeorm';
 import { Contribution, PaymentStatus } from '../groups/contribution.entity';
 import { GroupMember } from '../groups/group-member.entity';
@@ -69,26 +70,18 @@ export class UsersService {
   }
 
   async getUserDashboard(user: User, startDate?: string, endDate?: string) {
+    const { start, end } = buildDateRange(startDate, endDate);
+
     const query = this.contributionRepo
       .createQueryBuilder('c')
       .where('c.userId = :userId', { userId: user.id });
 
-    if (startDate) {
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-
-      query.andWhere('c.createdAt >= :startDate', {
-        startDate: start,
-      });
+    if (start) {
+      query.andWhere('c.createdAt >= :start', { start });
     }
 
-    if (endDate) {
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-
-      query.andWhere('c.createdAt <= :endDate', {
-        endDate: end,
-      });
+    if (end) {
+      query.andWhere('c.createdAt <= :end', { end });
     }
 
     const contributions = await query.getMany();
@@ -106,7 +99,7 @@ export class UsersService {
       0,
     );
 
-    // 🔥 GROUP STATS SHOULD NOT BE DATE FILTERED
+    // GROUP STATS NOT DATE FILTERED
     const memberships = await this.memberRepo.find({
       where: { user: { id: user.id } },
       relations: ['group', 'group.createdBy'],
@@ -114,31 +107,22 @@ export class UsersService {
 
     const groups = memberships.map((m) => m.group);
 
-    const activeGroups = groups.filter(
-      (g) => g.status === GroupStatus.ACTIVE,
-    ).length;
-
-    const completedGroups = groups.filter(
-      (g) => g.status === GroupStatus.COMPLETED,
-    ).length;
-
-    const disbursedGroups = groups.filter(
-      (g) => g.status === GroupStatus.DISBURSED,
-    ).length;
-
-    const groupsCreated = groups.filter(
-      (g) => g.createdBy?.id === user.id,
-    ).length;
-
     return ApiResponse.success('User dashboard retrieved', {
+      filters: {
+        startDate: startDate ?? null,
+        endDate: endDate ?? null,
+      },
       totalDonated,
       successfulContributions: successful.length,
       failedContributions: failed.length,
       totalGroupsJoined: groups.length,
-      activeGroups,
-      completedGroups,
-      disbursedGroups,
-      groupsCreated,
+      activeGroups: groups.filter((g) => g.status === GroupStatus.ACTIVE)
+        .length,
+      completedGroups: groups.filter((g) => g.status === GroupStatus.COMPLETED)
+        .length,
+      disbursedGroups: groups.filter((g) => g.status === GroupStatus.DISBURSED)
+        .length,
+      groupsCreated: groups.filter((g) => g.createdBy?.id === user.id).length,
     });
   }
 

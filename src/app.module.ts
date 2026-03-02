@@ -6,6 +6,7 @@ import { UsersModule } from './modules/users/users.module';
 import { GroupsModule } from './modules/groups/groups.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { LedgerModule } from './modules/ledger/ledger.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { LedgerModule } from './modules/ledger/ledger.module';
     GroupsModule,
     PaymentsModule,
     LedgerModule,
+    AdminModule,
   ],
 })
 export class AppModule {}
